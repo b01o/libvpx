@@ -105,6 +105,7 @@ all_platforms="${all_platforms} arm64-darwin22-gcc"
 all_platforms="${all_platforms} arm64-darwin23-gcc"
 all_platforms="${all_platforms} arm64-darwin24-gcc"
 all_platforms="${all_platforms} arm64-darwin25-gcc"
+all_platforms="${all_platforms} arm64-iphonesimulator-gcc"
 all_platforms="${all_platforms} arm64-linux-gcc"
 all_platforms="${all_platforms} arm64-win64-gcc"
 all_platforms="${all_platforms} arm64-win64-vs15"
@@ -172,6 +173,8 @@ all_platforms="${all_platforms} x86_64-darwin23-gcc"
 all_platforms="${all_platforms} x86_64-darwin24-gcc"
 all_platforms="${all_platforms} x86_64-darwin25-gcc"
 all_platforms="${all_platforms} x86_64-iphonesimulator-gcc"
+all_platforms="${all_platforms} x86_64-appletvsimulator-gcc"
+all_platforms="${all_platforms} arm64-appletvsimulator-gcc"
 all_platforms="${all_platforms} x86_64-linux-gcc"
 all_platforms="${all_platforms} x86_64-linux-icc"
 all_platforms="${all_platforms} x86_64-solaris-gcc"
@@ -565,7 +568,7 @@ process_detect() {
         # here rather than at option parse time because the target auto-detect
         # magic happens after the command line has been parsed.
         case "${tgt_os}" in
-        linux|os2|solaris|darwin*|iphonesimulator*)
+        linux|os2|solaris|darwin*|iphonesimulator*|appletvsimulator*)
             # Supported platforms
             ;;
         *)

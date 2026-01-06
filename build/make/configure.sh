@@ -922,15 +922,45 @@ EOF
     IOS_VERSION_MIN="7.0"
   fi
 
+  TVOS_VERSION_MIN="9.0"
+  XROS_VERSION_MIN="1.0"
+
   # Handle darwin variants. Newer SDKs allow targeting older
   # platforms, so use the newest one available.
   case ${toolchain} in
     arm*-darwin-*)
-      add_cflags "-miphoneos-version-min=${IOS_VERSION_MIN}"
-      iphoneos_sdk_dir="$(show_darwin_sdk_path iphoneos)"
-      if [ -d "${iphoneos_sdk_dir}" ]; then
-        add_cflags  "-isysroot ${iphoneos_sdk_dir}"
-        add_ldflags "-isysroot ${iphoneos_sdk_dir}"
+      # Handle iOS, tvOS, and visionOS device targets
+      # Use SDKROOT if set (from build system), otherwise default to iphoneos
+      if [ -n "${SDKROOT}" ]; then
+        # SDKROOT is already set by the build system
+        add_cflags  "-isysroot ${SDKROOT}"
+        add_ldflags "-isysroot ${SDKROOT}"
+        # Determine the platform from SDKROOT path and set deployment target
+        # Modern clang uses -target instead of -mXXX-version-min for tvOS/visionOS
+        case "${SDKROOT}" in
+          *iPhoneOS.platform*)
+            add_cflags "-miphoneos-version-min=${IOS_VERSION_MIN}"
+            add_ldflags "-miphoneos-version-min=${IOS_VERSION_MIN}"
+            ;;
+          *AppleTVOS.platform*)
+            # Use -target for tvOS
+            add_cflags "-target arm64-apple-tvos${TVOS_VERSION_MIN}"
+            add_ldflags "-target arm64-apple-tvos${TVOS_VERSION_MIN}"
+            ;;
+          *XROS.platform*)
+            # Use -target for visionOS  
+            add_cflags "-target arm64-apple-xros${XROS_VERSION_MIN}"
+            add_ldflags "-target arm64-apple-xros${XROS_VERSION_MIN}"
+            ;;
+        esac
+      else
+        # Legacy behavior: assume iOS if SDKROOT not set
+        add_cflags "-miphoneos-version-min=${IOS_VERSION_MIN}"
+        iphoneos_sdk_dir="$(show_darwin_sdk_path iphoneos)"
+        if [ -d "${iphoneos_sdk_dir}" ]; then
+          add_cflags  "-isysroot ${iphoneos_sdk_dir}"
+          add_ldflags "-isysroot ${iphoneos_sdk_dir}"
+        fi
       fi
       ;;
     *-darwin*)
@@ -996,12 +1026,21 @@ EOF
       add_ldflags "-arch ${toolchain%%-*}"
       ;;
     *-iphonesimulator-*)
-      add_cflags  "-miphoneos-version-min=${IOS_VERSION_MIN}"
-      add_ldflags "-miphoneos-version-min=${IOS_VERSION_MIN}"
+      add_cflags  "-mios-simulator-version-min=${IOS_VERSION_MIN}"
+      add_ldflags "-mios-simulator-version-min=${IOS_VERSION_MIN}"
       iossim_sdk_dir="$(show_darwin_sdk_path iphonesimulator)"
       if [ -d "${iossim_sdk_dir}" ]; then
         add_cflags  "-isysroot ${iossim_sdk_dir}"
         add_ldflags "-isysroot ${iossim_sdk_dir}"
+      fi
+      ;;
+    *-appletvsimulator-*)
+      add_cflags  "-mtvos-simulator-version-min=${IOS_VERSION_MIN}"
+      add_ldflags "-mtvos-simulator-version-min=${IOS_VERSION_MIN}"
+      tvsim_sdk_dir="$(show_darwin_sdk_path appletvsimulator)"
+      if [ -d "${tvsim_sdk_dir}" ]; then
+        add_cflags  "-isysroot ${tvsim_sdk_dir}"
+        add_ldflags "-isysroot ${tvsim_sdk_dir}"
       fi
       ;;
   esac
@@ -1183,7 +1222,30 @@ EOF
 
         darwin)
           if ! enabled external_build; then
-            XCRUN_FIND="xcrun --sdk iphoneos --find"
+            # Determine the appropriate SDK based on SDKROOT or default to iphoneos
+            SDK_NAME="iphoneos"
+            VERSION_FLAG="-miphoneos-version-min"
+            VERSION_VALUE="${IOS_VERSION_MIN}"
+            
+            if [ -n "${SDKROOT}" ]; then
+              case "${SDKROOT}" in
+                *AppleTVOS.platform*)
+                  SDK_NAME="appletvos"
+                  VERSION_FLAG="-target"
+                  VERSION_VALUE="arm64-apple-tvos${TVOS_VERSION_MIN}"
+                  ;;
+                *XROS.platform*)
+                  SDK_NAME="xros"
+                  VERSION_FLAG="-target"
+                  VERSION_VALUE="arm64-apple-xros${XROS_VERSION_MIN}"
+                  ;;
+                *iPhoneOS.platform*)
+                  SDK_NAME="iphoneos"
+                  ;;
+              esac
+            fi
+            
+            XCRUN_FIND="xcrun --sdk ${SDK_NAME} --find"
             CXX="$(${XCRUN_FIND} clang++)"
             CC="$(${XCRUN_FIND} clang)"
             AR="$(${XCRUN_FIND} ar)"
@@ -1200,15 +1262,20 @@ EOF
             add_cflags -arch ${tgt_isa}
             add_ldflags -arch ${tgt_isa}
 
-            alt_libc="$(show_darwin_sdk_path iphoneos)"
+            alt_libc="$(show_darwin_sdk_path ${SDK_NAME})"
             if [ -d "${alt_libc}" ]; then
               add_cflags -isysroot ${alt_libc}
             fi
 
             if [ "${LD}" = "${CXX}" ]; then
-              add_ldflags -miphoneos-version-min="${IOS_VERSION_MIN}"
+              if [ "${VERSION_FLAG}" = "-target" ]; then
+                add_ldflags ${VERSION_FLAG} ${VERSION_VALUE}
+              else
+                add_ldflags ${VERSION_FLAG}="${VERSION_VALUE}"
+              fi
             else
-              add_ldflags -ios_version_min "${IOS_VERSION_MIN}"
+              # For non-clang linkers (ld), use -ios_version_min format
+              add_ldflags -ios_version_min "${VERSION_VALUE}"
             fi
 
             for d in lib usr/lib usr/lib/system; do
@@ -1229,7 +1296,7 @@ EOF
                 ;;
             esac
 
-            if [ "$(show_darwin_sdk_major_version iphoneos)" -gt 8 ] \
+            if [ "$(show_darwin_sdk_major_version ${SDK_NAME})" -gt 8 ] \
                && [ "$(show_xcode_version | cut -d. -f1)" -lt 16 ]; then
               check_add_cflags -fembed-bitcode
               check_add_asflags -fembed-bitcode
@@ -1515,7 +1582,15 @@ EOF
           ;;
         iphonesimulator)
           add_asflags -f macho${bits}
-          enabled x86 && sim_arch="-arch i386" || sim_arch="-arch x86_64"
+          if enabled x86; then
+            sim_arch="-arch i386"
+          elif enabled x86_64; then
+            sim_arch="-arch x86_64"
+          elif enabled arm64 || enabled aarch64; then
+            sim_arch="-arch arm64"
+          else
+            sim_arch="-arch x86_64"
+          fi
           add_cflags  ${sim_arch}
           add_ldflags ${sim_arch}
 
@@ -1525,6 +1600,23 @@ EOF
             # on is pointless (unless building a C-only lib). Warn the user, but
             # do nothing here.
             log "Warning: Bitcode embed disabled for simulator targets."
+          fi
+          ;;
+        appletvsimulator)
+          add_asflags -f macho${bits}
+          if enabled x86_64; then
+            sim_arch="-arch x86_64"
+          elif enabled arm64 || enabled aarch64; then
+            sim_arch="-arch arm64"
+          else
+            sim_arch="-arch x86_64"
+          fi
+          add_cflags  ${sim_arch}
+          add_ldflags ${sim_arch}
+
+          if [ "$(disabled external_build)" ] &&
+              [ "$(show_darwin_sdk_major_version appletvsimulator)" -gt 8 ]; then
+            log "Warning: Bitcode embed disabled for tvOS simulator targets."
           fi
           ;;
         os2)
